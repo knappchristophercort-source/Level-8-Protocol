@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "l8-reference"
+version = "0.1.0"
+description = "Reference scaffold for the L8 Protocol"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Level-8-Protocol contributors" }
+]
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["l8_reference*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
