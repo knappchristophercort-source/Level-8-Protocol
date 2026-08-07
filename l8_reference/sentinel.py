@@ -11,6 +11,15 @@ class L8Sentinel:
     The sentinel holds its own identity and a declared scope, then signs
     observations using the *subject*'s signing function before batching them
     to the ledger via *ledger_submit_fn*.
+
+    Args:
+        sentinel_identity: The ``L8Identity`` representing this sentinel.
+        scope: A dict describing the observation scope (components, actions, etc.).
+        ledger_submit_fn: Callable that accepts a list of attestation dicts and
+            submits them to the ledger.
+        auto_flush_threshold: When greater than zero, ``flush()`` is called
+            automatically inside ``observe()`` as soon as the queue reaches this
+            many pending attestations.  ``0`` (the default) disables auto-flush.
     """
 
     def __init__(
@@ -18,10 +27,12 @@ class L8Sentinel:
         sentinel_identity: L8Identity,
         scope: Dict[str, Any],
         ledger_submit_fn: Callable[[List[Dict]], Any],
+        auto_flush_threshold: int = 0,
     ) -> None:
         self.identity = sentinel_identity
         self._scope = scope
         self._submit_fn = ledger_submit_fn
+        self._auto_flush_threshold = auto_flush_threshold
         self._queue: List[Dict] = []
         self.submitted_count: int = 0
 
@@ -46,6 +57,10 @@ class L8Sentinel:
     def observe(self, observation: Dict[str, Any]) -> None:
         """Create an attestation from *observation* and queue it for submission.
 
+        If ``auto_flush_threshold`` was set at construction time and the queue
+        length reaches that threshold after appending this attestation,
+        ``flush()`` is called automatically.
+
         *observation* keys:
             subject_id      – UUID of the subject being attested
             subject_pk      – Base64url public key of the subject
@@ -63,11 +78,24 @@ class L8Sentinel:
             prev_hash=observation.get("prev_hash"),
         )
         self._queue.append(att)
+        if self._auto_flush_threshold > 0 and len(self._queue) >= self._auto_flush_threshold:
+            self.flush()
 
-    def _flush_queue(self) -> None:
-        """Submit all queued attestations to the ledger and reset the queue."""
+    def flush(self) -> None:
+        """Submit all queued attestations to the ledger and reset the queue.
+
+        This is a no-op when the queue is empty.
+        """
         if not self._queue:
             return
         self._submit_fn(list(self._queue))
         self.submitted_count += len(self._queue)
         self._queue.clear()
+
+    # ------------------------------------------------------------------
+    # Deprecated alias — use flush() instead
+    # ------------------------------------------------------------------
+
+    def _flush_queue(self) -> None:
+        """Deprecated: use ``flush()`` instead."""
+        self.flush()

@@ -138,19 +138,22 @@ class L8Verifier:
         - have claim type ``"endorsement"``
         - carry a valid dual signature (``auth_signature`` + ``auth_pk_b64url``)
         - have been co-signed by a key that is *different* from the subject's
-          own key (preventing self-endorsement)
+          own key (preventing self-endorsement regardless of key rotation)
+        - have an ``endorser_id`` that is different from the subject's UUID
         - be gated on L7 having been satisfied first
         """
         if not self._condition_l7(history):
             return False
-        # Collect all subject public keys used across the history so we can
-        # reject self-endorsements regardless of key rotation.
+        # Collect the subject UUID and all subject public keys used across the
+        # history so we can reject self-endorsements in both dimensions.
+        subject_uuid = history[0]["subject_id"]
         subject_keys = {a["subject_pk_b64url"] for a in history}
         for att in history:
             if att["claim"]["type"] != "endorsement":
                 continue
             body = att["claim"]["body"]
-            if "endorser_id" not in body:
+            endorser_id = body.get("endorser_id")
+            if not endorser_id or endorser_id == subject_uuid:
                 continue
             auth_pk = att.get("auth_pk_b64url", "")
             if not auth_pk or auth_pk in subject_keys:
