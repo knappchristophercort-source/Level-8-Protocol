@@ -106,16 +106,30 @@ class L8Verifier:
             block_copy = dict(block)
             block_copy["witness"] = None
             block_hash = L8Crypto.hash(L8Crypto.canonical_json(block_copy))
-            public_key = L8Crypto.deserialize_public_key(witness["pk"])
-            signature = L8Crypto.b64url_decode(witness["sig"])
-            if not L8Crypto.verify(public_key, block_hash, signature):
-                return False
+            if isinstance(witness, list):
+                unique_public_keys: set[str] = set()
+                for entry in witness:
+                    public_key = L8Crypto.deserialize_public_key(entry["pk"])
+                    signature = L8Crypto.b64url_decode(entry["sig"])
+                    if not L8Crypto.verify(public_key, block_hash, signature):
+                        return False
+                    unique_public_keys.add(entry["pk"])
+            else:
+                public_key = L8Crypto.deserialize_public_key(witness["pk"])
+                signature = L8Crypto.b64url_decode(witness["sig"])
+                if not L8Crypto.verify(public_key, block_hash, signature):
+                    return False
         except Exception:
             return False
 
         active_ledger = ledger or self.ledger
         if active_ledger is None:
             return True
+
+        if isinstance(witness, list):
+            policy = getattr(getattr(active_ledger, "operator_set", None), "policy", None)
+            if policy and not policy.is_satisfied(len({entry["pk"] for entry in witness})):
+                return False
 
         attestations: list[dict[str, Any]] = []
         for attestation_id in block.get("attestations", []):

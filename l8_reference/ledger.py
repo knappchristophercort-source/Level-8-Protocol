@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from .attestation import L8Attestation
+from .consensus import ConsensusEngine, OperatorSet, ThresholdPolicy
 from .crypto import L8Crypto
 from .storage import FileStorage
 
@@ -27,6 +28,8 @@ class L8WitnessLedger:
         mode_policy: str | None = None,
         storage_dir: str | None = None,
         use_cbor: bool = False,
+        operator_set: OperatorSet | None = None,
+        threshold_policy: ThresholdPolicy | None = None,
     ) -> None:
         if mode not in self.VALID_MODES:
             raise ValueError(f"Invalid mode: {mode}")
@@ -35,6 +38,10 @@ class L8WitnessLedger:
         self.mode_policy = mode_policy or f"Default policy for {mode} mode."
         self.mode_history: list[list[Any]] = [[mode, L8Crypto.now_unix_ns()]]
         self.use_cbor = use_cbor
+        self.operator_set = operator_set
+        if self.operator_set and threshold_policy is not None:
+            self.operator_set.set_policy(threshold_policy)
+        self._consensus = ConsensusEngine(self.operator_set) if self.operator_set and self.operator_set.policy else None
         self._storage = FileStorage(storage_dir, use_cbor=use_cbor) if storage_dir else None
         self._blocks: list[dict[str, Any]] = []
         self._attestations: dict[str, dict[str, Any]] = {}
@@ -85,6 +92,10 @@ class L8WitnessLedger:
                 "mode_policy": self.mode_policy,
                 "seq": self._seq,
                 "operator_uuid": self.operator.uuid,
+                "threshold_policy": self.operator_set.policy.to_dict()
+                if self.operator_set and self.operator_set.policy
+                else None,
+                "operator_keys": self.operator_set.get_public_keys() if self.operator_set else None,
             }
         )
         self._storage.save_subject_index(self._subject_index)
@@ -147,10 +158,21 @@ class L8WitnessLedger:
             "witness": None,
         }
         block_hash = L8Crypto.hash(L8Crypto.canonical_json(block))
-        block["witness"] = {
-            "pk": self.operator.public_key_b64url,
-            "sig": L8Crypto.b64url_encode(self.operator.sign(block_hash)),
-        }
+        if self._consensus and self.operator_set and self.operator_set.policy:
+            block_id = self._consensus.propose_block(block)
+            for operator_id in self.operator_set.operators:
+                threshold_met = self._consensus.sign_block(block_id, operator_id)
+                if threshold_met:
+                    break
+            witness = self._consensus.get_block_witness(block_id)
+            if witness is None:
+                raise RuntimeError("Unable to satisfy threshold witness policy for block")
+            block["witness"] = witness
+        else:
+            block["witness"] = {
+                "pk": self.operator.public_key_b64url,
+                "sig": L8Crypto.b64url_encode(self.operator.sign(block_hash)),
+            }
         return block
 
     def _compute_merkle_root(self, hashes: list[str]) -> str:
@@ -240,17 +262,33 @@ class L8WitnessLedger:
     def verify_chain(self) -> bool:
         with self._lock:
             for index, block in enumerate(self._blocks):
-                witness = block.get("witness") or {}
                 block_copy = dict(block)
                 block_copy["witness"] = None
-                try:
-                    public_key = L8Crypto.deserialize_public_key(witness["pk"])
-                    signature = L8Crypto.b64url_decode(witness["sig"])
-                except Exception:
-                    return False
                 block_hash = L8Crypto.hash(L8Crypto.canonical_json(block_copy))
-                if not L8Crypto.verify(public_key, block_hash, signature):
-                    return False
+                witness = block.get("witness")
+                if isinstance(witness, list):
+                    policy = self.operator_set.policy if self.operator_set and self.operator_set.policy else None
+                    unique_public_keys: set[str] = set()
+                    for entry in witness:
+                        try:
+                            public_key = L8Crypto.deserialize_public_key(entry["pk"])
+                            signature = L8Crypto.b64url_decode(entry["sig"])
+                        except Exception:
+                            return False
+                        if not L8Crypto.verify(public_key, block_hash, signature):
+                            return False
+                        unique_public_keys.add(entry["pk"])
+                    if policy and not policy.is_satisfied(len(unique_public_keys)):
+                        return False
+                else:
+                    witness = witness or {}
+                    try:
+                        public_key = L8Crypto.deserialize_public_key(witness["pk"])
+                        signature = L8Crypto.b64url_decode(witness["sig"])
+                    except Exception:
+                        return False
+                    if not L8Crypto.verify(public_key, block_hash, signature):
+                        return False
                 if index > 0:
                     expected_hash = L8Crypto.hash_b64url(L8Crypto.canonical_json(self._blocks[index - 1]))
                     if block["prev_block_hash"] != expected_hash:

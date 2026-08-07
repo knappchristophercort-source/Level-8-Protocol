@@ -145,6 +145,8 @@ class FileStorage:
         return self._read(self._attestations_path / f"{attestation_id}{self._ext()}")
 
     def verify_integrity(self) -> bool:
+        meta = self.load_meta() or {}
+        threshold_policy = (meta.get("threshold_policy") or {}).get("threshold", 0)
         seqs = self.list_blocks()
         if not seqs:
             return True
@@ -165,10 +167,21 @@ class FileStorage:
                 block_copy["witness"] = None
                 block_hash = L8Crypto.hash(L8Crypto.canonical_json(block_copy))
                 witness = block["witness"]
-                public_key = L8Crypto.deserialize_public_key(witness["pk"])
-                signature = L8Crypto.b64url_decode(witness["sig"])
-                if not L8Crypto.verify(public_key, block_hash, signature):
-                    return False
+                if isinstance(witness, list):
+                    unique_public_keys: set[str] = set()
+                    for entry in witness:
+                        public_key = L8Crypto.deserialize_public_key(entry["pk"])
+                        signature = L8Crypto.b64url_decode(entry["sig"])
+                        if not L8Crypto.verify(public_key, block_hash, signature):
+                            return False
+                        unique_public_keys.add(entry["pk"])
+                    if threshold_policy and len(unique_public_keys) < threshold_policy:
+                        return False
+                else:
+                    public_key = L8Crypto.deserialize_public_key(witness["pk"])
+                    signature = L8Crypto.b64url_decode(witness["sig"])
+                    if not L8Crypto.verify(public_key, block_hash, signature):
+                        return False
             except Exception:
                 return False
             previous_block = block

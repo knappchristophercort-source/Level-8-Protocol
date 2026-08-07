@@ -2,6 +2,7 @@
 
 __all__ = [
     "attestation",
+    "consensus",
     "crypto",
     "identity",
     "ledger",

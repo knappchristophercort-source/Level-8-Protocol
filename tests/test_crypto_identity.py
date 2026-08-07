@@ -8,6 +8,7 @@ from typing import Any
 import uuid
 
 from l8_reference.attestation import L8Attestation
+from l8_reference.consensus import OperatorSet, ThresholdPolicy
 from l8_reference.crypto import (
     ALG_ED25519,
     ALG_HYBRID_ED25519_ML_DSA_65,
@@ -463,6 +464,32 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
             ],
         )
         self.assertEqual(verifier.verify_attestation(null_attestation["id"]), (True, None))
+
+    def test_threshold_consensus_witnesses_blocks(self) -> None:
+        operators = [L8Identity(kind=L8Identity.KIND_HUMAN) for _ in range(3)]
+        operator_set = OperatorSet()
+        for operator in operators:
+            operator_set.add_operator(operator)
+        policy = ThresholdPolicy(2, len(operators))
+
+        ledger = L8WitnessLedger(
+            operators[0],
+            mode=L8WitnessLedger.MODE_FEDERATED,
+            operator_set=operator_set,
+            threshold_policy=policy,
+        )
+        verifier = L8Verifier(ledger)
+        subject = L8Identity()
+        ledger.submit_attestations([subject.create_binding_attestation()])
+
+        latest_block = ledger.get_latest_block()
+
+        self.assertIsInstance(latest_block["witness"], list)
+        self.assertGreaterEqual(len(latest_block["witness"]), 2)
+        self.assertEqual(len({entry["pk"] for entry in latest_block["witness"]}), 2)
+        self.assertTrue(ledger.verify_chain())
+        self.assertTrue(verifier.verify_block(latest_block))
+        self.assertTrue(verifier.verify_chain_integrity())
 
     def test_sentinel_observe_format_submit_flow(self) -> None:
         operator = L8Identity()
