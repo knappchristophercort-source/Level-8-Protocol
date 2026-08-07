@@ -1,11 +1,12 @@
 """L8 Protocol reference implementation package scaffold."""
 
 __all__ = [
+    "attestation",
     "crypto",
     "identity",
-    "attestation",
     "ledger",
     "sentinel",
+    "storage",
     "verifier",
     "observer",
 ]

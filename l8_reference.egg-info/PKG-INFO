@@ -28,6 +28,9 @@ License: MIT License
 Requires-Python: >=3.12
 Description-Content-Type: text/markdown
 License-File: LICENSE
+Requires-Dist: blake3==1.0.9
+Requires-Dist: cbor2==6.1.4
+Requires-Dist: cryptography==50.0.0
 Dynamic: license-file
 
 # Level-8-Protocol

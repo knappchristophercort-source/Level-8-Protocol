@@ -8,9 +8,12 @@ l8_reference/identity.py
 l8_reference/ledger.py
 l8_reference/observer.py
 l8_reference/sentinel.py
+l8_reference/storage.py
 l8_reference/verifier.py
 l8_reference.egg-info/PKG-INFO
 l8_reference.egg-info/SOURCES.txt
 l8_reference.egg-info/dependency_links.txt
+l8_reference.egg-info/requires.txt
 l8_reference.egg-info/top_level.txt
+tests/test_crypto_identity.py
 tests/test_imports.py

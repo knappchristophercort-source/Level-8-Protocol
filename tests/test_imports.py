@@ -9,6 +9,7 @@ class ScaffoldImportTests(unittest.TestCase):
             "l8_reference.identity",
             "l8_reference.attestation",
             "l8_reference.ledger",
+            "l8_reference.storage",
             "l8_reference.sentinel",
             "l8_reference.verifier",
             "l8_reference.observer",
