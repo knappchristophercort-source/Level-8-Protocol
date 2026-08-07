@@ -1,0 +1,2 @@
+[console_scripts]
+l8-demo = l8_reference.demo:main
