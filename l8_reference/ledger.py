@@ -58,7 +58,9 @@ class L8WitnessLedger:
         self.mode_history = meta["mode_history"]
         self.mode_policy = meta.get("mode_policy", "")
         self._seq = meta.get("seq", 0)
-        self._subject_index = self._storage.load_subject_index() or {}
+        self._subject_index = {}
+        self._blocks = []
+        self._attestations = {}
 
         for seq in self._storage.list_blocks():
             block = self._storage.load_block(seq)
@@ -67,8 +69,11 @@ class L8WitnessLedger:
             self._blocks.append(block)
             for attestation_id in block.get("attestations", []):
                 attestation = self._storage.load_attestation(attestation_id)
-                if attestation:
+                if attestation and attestation_id not in self._attestations:
                     self._attestations[attestation_id] = attestation
+                    self._subject_index.setdefault(attestation["sub"], []).append(attestation_id)
+        if self._blocks:
+            self._seq = max(self._seq, self._blocks[-1]["seq"] + 1)
 
     def _persist_state(self) -> None:
         if not self._storage:

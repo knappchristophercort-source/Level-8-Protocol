@@ -7,6 +7,16 @@ from typing import Any
 
 from .crypto import L8Crypto
 
+CLAIM_LEVEL_REQUIREMENT = {
+    "identity": 1,
+    "binding": 2,
+    "action": 3,
+    "witness": 4,
+    "anomaly": 6,
+    "succession": 7,
+    "null": 8,
+}
+
 
 class L8Attestation:
     """Utility helpers for attestation hashing and structural verification."""

@@ -4,6 +4,8 @@ import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
+import uuid
 
 from l8_reference.attestation import L8Attestation
 from l8_reference.crypto import (
@@ -16,11 +18,45 @@ from l8_reference.crypto import (
 from l8_reference.identity import L8Identity
 from l8_reference.ledger import L8WitnessLedger
 from l8_reference.observer import L8Observer
+from l8_reference.storage import FileStorage
 from l8_reference.sentinel import L8Sentinel
-from l8_reference.verifier import L8Verifier
+from l8_reference.verifier import L8Level, L8Verifier
 
 
 class CryptoIdentityLedgerTests(unittest.TestCase):
+    def _make_attestation(
+        self,
+        subject: L8Identity,
+        claim_type: str,
+        claim_body: dict[str, Any],
+        prev: str | None = None,
+        *,
+        pk_b64url: str | None = None,
+        sign_fn: Any | None = None,
+        witnesses: list[dict[str, Any]] | None = None,
+        extra_fields: dict[str, Any] | None = None,
+        ts_unix_ns: int | None = None,
+    ) -> dict[str, Any]:
+        attestation = {
+            "ver": "L8/1.0",
+            "id": f"{claim_type}-{uuid.uuid4()}",
+            "sub": subject.uuid,
+            "claim": {"type": claim_type, "body": claim_body},
+            "ts_unix_ns": ts_unix_ns or L8Crypto.now_unix_ns(),
+            "ts_rfc3339": L8Crypto.now_rfc3339(),
+            "prev": prev,
+            "sig": None,
+            "pk": pk_b64url or subject.public_key_b64url,
+            "wit": witnesses or [],
+            "meta": {"sentinel": subject.uuid, "scope": f"{claim_type}-test", "env": "production"},
+        }
+        if extra_fields:
+            attestation.update(extra_fields)
+        payload = {key: value for key, value in attestation.items() if key not in {"sig", "wit"}}
+        signer = sign_fn or subject.sign
+        attestation["sig"] = L8Crypto.b64url_encode(signer(L8Crypto.canonical_hash(payload)))
+        return attestation
+
     def test_hash_configuration_and_encodings(self) -> None:
         data = b"level-8"
         digest = L8Crypto.hash(data)
@@ -163,6 +199,59 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
         self.assertEqual(reloaded.get_subject_history(subject.uuid)[0]["id"], attestation["id"])
         self.assertEqual(reloaded.generate_inclusion_proof(attestation["id"]), [])
 
+    def test_file_storage_append_only_integrity_and_ledger_recovery(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            storage_dir = Path(temp_dir)
+            operator = L8Identity(kind=L8Identity.KIND_HUMAN)
+            ledger = L8WitnessLedger(
+                operator,
+                storage_dir=str(storage_dir),
+                mode=L8WitnessLedger.MODE_PUBLIC,
+            )
+            subject = L8Identity()
+            attestation = subject.create_binding_attestation()
+            ledger.submit_attestations([attestation])
+
+            storage = FileStorage(storage_dir)
+            self.assertTrue((storage_dir / "index").is_dir())
+            self.assertTrue(storage.verify_integrity())
+
+            with self.assertRaises(FileExistsError):
+                storage.save_block(1, ledger.get_block_by_seq(1))
+
+            original_attestation = storage.load_attestation(attestation["id"])
+            self.assertIsNotNone(original_attestation)
+            storage.save_attestation(
+                attestation["id"],
+                {**attestation, "meta": {"sentinel": "tampered", "scope": "tampered", "env": "test"}},
+            )
+            self.assertEqual(storage.load_attestation(attestation["id"]), original_attestation)
+
+            stale_meta = storage.load_meta()
+            self.assertIsNotNone(stale_meta)
+            storage.save_meta({**stale_meta, "seq": 0})
+            storage.save_subject_index({})
+
+            reloaded = L8WitnessLedger(
+                operator,
+                storage_dir=str(storage_dir),
+                mode=L8WitnessLedger.MODE_PRIVATE,
+            )
+            next_subject = L8Identity()
+            reloaded.submit_attestations([next_subject.create_binding_attestation()])
+
+            self.assertEqual(reloaded.get_block_count(), 3)
+            self.assertIsNotNone(reloaded.get_block_by_seq(2))
+            self.assertEqual(reloaded.get_subject_history(subject.uuid)[0]["id"], attestation["id"])
+
+            block_path = storage_dir / "blocks" / "1.json"
+            tampered_block = storage.load_block(1)
+            self.assertIsNotNone(tampered_block)
+            block_path.write_bytes(
+                L8Crypto.canonical_json({**tampered_block, "prev_block_hash": "tampered-prev-hash"})
+            )
+            self.assertFalse(storage.verify_integrity())
+
     def test_witness_ledger_mode_transition_updates_summary(self) -> None:
         operator = L8Identity()
         ledger = L8WitnessLedger(operator, mode=L8WitnessLedger.MODE_PRIVATE)
@@ -278,6 +367,102 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
         tampered_attestation = dict(attestation)
         tampered_attestation["sig"] = L8Crypto.b64url_encode(b"\x00" * 64)
         self.assertFalse(verifier.verify_attestation_signature(tampered_attestation))
+
+    def test_verifier_level_computation_and_provenance(self) -> None:
+        operator = L8Identity()
+        ledger = L8WitnessLedger(operator, mode=L8WitnessLedger.MODE_PUBLIC)
+        verifier = L8Verifier(ledger)
+        subject = L8Identity()
+        identity_attestation = subject.create_binding_attestation()
+        identity_attestation["wit"] = [{"pk": operator.public_key_b64url, "ts_unix_ns": L8Crypto.now_unix_ns()}]
+        action_attestation = self._make_attestation(
+            subject,
+            "action",
+            {"action_type": "deploy"},
+            prev=L8Attestation.get_attestation_hash(identity_attestation),
+            ts_unix_ns=identity_attestation["ts_unix_ns"] + 1,
+        )
+        anomaly_attestation = self._make_attestation(
+            subject,
+            "anomaly",
+            {"components": [subject.uuid], "severity": "low"},
+            prev=L8Attestation.get_attestation_hash(action_attestation),
+            witnesses=[{"pk": operator.public_key_b64url, "ts_unix_ns": L8Crypto.now_unix_ns()}],
+            ts_unix_ns=action_attestation["ts_unix_ns"] + 1,
+        )
+
+        next_private_key, next_public_key = L8Crypto.generate_keypair()
+        next_public_key_b64url = L8Crypto.serialize_public_key(next_public_key)
+        succession_attestation = {
+            "ver": "L8/1.0",
+            "id": f"succession-{uuid.uuid4()}",
+            "sub": subject.uuid,
+            "claim": {
+                "type": "succession",
+                "body": {
+                    "prev_pk": subject.public_key_b64url,
+                    "next_pk": next_public_key_b64url,
+                },
+            },
+            "ts_unix_ns": anomaly_attestation["ts_unix_ns"] + 1,
+            "ts_rfc3339": L8Crypto.now_rfc3339(),
+            "prev": L8Attestation.get_attestation_hash(anomaly_attestation),
+            "sig": None,
+            "pk": next_public_key_b64url,
+            "wit": [],
+            "meta": {"sentinel": operator.uuid, "scope": "succession-test", "env": "production"},
+        }
+        auth_payload = L8Crypto.canonical_hash(
+            {key: value for key, value in succession_attestation.items() if key not in {"sig", "auth_sig", "wit"}}
+        )
+        succession_attestation["auth_sig"] = {
+            "pk": subject.public_key_b64url,
+            "sig": L8Crypto.b64url_encode(subject.sign(auth_payload)),
+        }
+        succession_attestation["sig"] = L8Crypto.b64url_encode(
+            L8Crypto.sign(
+                next_private_key,
+                L8Crypto.canonical_hash(
+                    {key: value for key, value in succession_attestation.items() if key not in {"sig", "wit"}}
+                ),
+            )
+        )
+
+        null_attestation = self._make_attestation(
+            subject,
+            "null",
+            {"reason": "contiguous observation window"},
+            prev=L8Attestation.get_attestation_hash(succession_attestation),
+            pk_b64url=next_public_key_b64url,
+            sign_fn=lambda payload: L8Crypto.sign(next_private_key, payload),
+            ts_unix_ns=succession_attestation["ts_unix_ns"] + 1,
+        )
+
+        ledger.submit_attestations(
+            [identity_attestation, action_attestation, anomaly_attestation, succession_attestation, null_attestation]
+        )
+
+        record = verifier.retrieve_attestation(null_attestation["id"])
+        report = verifier.full_report(subject.uuid)
+        provenance = verifier.reconstruct_provenance(null_attestation["id"])
+
+        self.assertIsNotNone(record)
+        self.assertEqual(record["attestation"]["id"], null_attestation["id"])
+        self.assertEqual(report["level"], L8Level.L8)
+        self.assertEqual(report["level_name"], "Observable")
+        self.assertTrue(all(report["conditions"].values()))
+        self.assertEqual(verifier.compute_level(subject.uuid), L8Level.L8)
+        self.assertEqual(
+            [attestation["id"] for attestation in provenance or []],
+            [
+                identity_attestation["id"],
+                action_attestation["id"],
+                anomaly_attestation["id"],
+                succession_attestation["id"],
+                null_attestation["id"],
+            ],
+        )
+        self.assertEqual(verifier.verify_attestation(null_attestation["id"]), (True, None))
 
     def test_sentinel_observe_format_submit_flow(self) -> None:
         operator = L8Identity()
