@@ -22,11 +22,31 @@ class L8Verifier:
 
     def verify_structure(self, attestation: dict[str, Any]) -> bool:
         """Validate the required attestation fields."""
-        return L8Attestation.verify_structure(attestation)
+        if not isinstance(attestation, dict):
+            return False
+        if not L8Attestation.REQUIRED_FIELDS.issubset(attestation):
+            return False
+        if not isinstance(attestation.get("claim"), dict):
+            return False
+        if not isinstance(attestation.get("meta"), dict):
+            return False
+        if not isinstance(attestation.get("wit"), list):
+            return False
+        signature = attestation.get("sig")
+        public_key = attestation.get("pk")
+        return isinstance(signature, str) and isinstance(public_key, str)
 
     def verify_attestation_signature(self, attestation: dict[str, Any]) -> bool:
         """Validate attestation structure and signature."""
-        return self.verify_structure(attestation)
+        if not self.verify_structure(attestation):
+            return False
+        try:
+            public_key = L8Crypto.deserialize_public_key(attestation["pk"])
+            signed_hash = L8Crypto.canonical_hash(L8Attestation.get_signing_payload(attestation))
+            signature = L8Crypto.b64url_decode(attestation["sig"])
+        except Exception:
+            return False
+        return L8Crypto.verify(public_key, signed_hash, signature)
 
     def verify_block_witness(self, block: dict[str, Any]) -> bool:
         """Validate the witness signature on a single block."""
