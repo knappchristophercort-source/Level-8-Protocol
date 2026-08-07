@@ -54,6 +54,20 @@ class L8Crypto:
         return hashlib.sha256(data).hexdigest()
 
     @staticmethod
+    def deserialize_public_key(pub: str) -> str:
+        """Validate and return a base64url-encoded public key.
+
+        Raises ``ValueError`` if *pub* cannot be decoded to a 32-byte Ed25519
+        public key.
+        """
+        raw = _b64url_decode(pub)
+        if len(raw) != 32:
+            raise ValueError(f"Expected 32-byte Ed25519 public key, got {len(raw)} bytes")
+        # Round-trip to confirm it is a well-formed key
+        Ed25519PublicKey.from_public_bytes(raw)
+        return pub
+
+    @staticmethod
     def identity_fingerprint(uuid: str, pk_b64url: str) -> str:
         """Return a deterministic fingerprint for a (uuid, public-key) pair."""
         payload = f"{uuid}:{pk_b64url}".encode()

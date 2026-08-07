@@ -1,0 +1,90 @@
+Metadata-Version: 2.4
+Name: l8-protocol
+Version: 1.4.0
+Summary: L8 Protocol Reference Implementation — The Eighth Layer of the OSI Model
+Author: L8 Protocol Contributors
+License: MIT
+Project-URL: Homepage, https://github.com/l8-protocol/l8-reference
+Project-URL: Documentation, https://l8-protocol.readthedocs.io
+Project-URL: Repository, https://github.com/l8-protocol/l8-reference
+Project-URL: Issues, https://github.com/l8-protocol/l8-reference/issues
+Keywords: attestation,evidence,provenance,ledger,cryptography,witness
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Information Technology
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Security :: Cryptography
+Classifier: Topic :: System :: Logging
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: cryptography>=41.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0; extra == "dev"
+Requires-Dist: mypy>=1.0; extra == "dev"
+Requires-Dist: ruff>=0.1.0; extra == "dev"
+Dynamic: license-file
+
+# L8 Protocol
+
+**L8 Protocol Reference Implementation** — The Eighth Layer of the OSI Model
+
+L8 Protocol provides a cryptographic attestation and evidence-provenance ledger, enabling tamper-evident witness chains for software supply-chain and audit use-cases.
+
+## Features
+
+- Cryptographic attestation of arbitrary payloads
+- Tamper-evident, append-only evidence ledger
+- Provenance chain construction and verification
+- Standards-friendly (CBOR/JSON serialisation)
+
+## Installation
+
+```bash
+pip install l8-protocol
+```
+
+For development extras:
+
+```bash
+pip install "l8-protocol[dev]"
+```
+
+## Quick Start
+
+```python
+from l8_reference import Ledger, Attestation
+
+ledger = Ledger()
+attestation = Attestation.create(payload=b"hello world")
+ledger.append(attestation)
+
+print(ledger.verify())  # True
+```
+
+Run the bundled demo:
+
+```bash
+l8-demo
+```
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+pytest
+ruff check .
+mypy l8_reference
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
