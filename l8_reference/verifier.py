@@ -20,6 +20,19 @@ class L8Verifier:
             raise ValueError("A ledger instance is required for this verification")
         return active_ledger
 
+    def _compute_merkle_root(self, hashes: list[str]) -> str:
+        if not hashes:
+            return L8Crypto.hash_b64url(b"")
+        layer = [L8Crypto.b64url_decode(item) for item in hashes]
+        while len(layer) > 1:
+            next_layer: list[bytes] = []
+            for index in range(0, len(layer), 2):
+                left = layer[index]
+                right = layer[index + 1] if index + 1 < len(layer) else left
+                next_layer.append(L8Crypto.hash(left + right))
+            layer = next_layer
+        return L8Crypto.b64url_encode(layer[0])
+
     def verify_structure(self, attestation: dict[str, Any]) -> bool:
         """Validate the required attestation fields."""
         if not isinstance(attestation, dict):
@@ -65,11 +78,11 @@ class L8Verifier:
     def verify_chain_integrity(self, ledger: Any | None = None) -> bool:
         """Validate block linkage, witness signatures, attestation signatures, and Merkle roots."""
         active_ledger = self._resolve_ledger(ledger)
-        blocks = [active_ledger.get_block_by_seq(seq) for seq in range(active_ledger.get_block_count())]
+        blocks = active_ledger.list_blocks()
 
         previous_block: dict[str, Any] | None = None
         for block in blocks:
-            if block is None or not self.verify_block_witness(block):
+            if not self.verify_block_witness(block):
                 return False
 
             attestations: list[dict[str, Any]] = []
@@ -79,7 +92,7 @@ class L8Verifier:
                     return False
                 attestations.append(attestation)
 
-            merkle_root = active_ledger._compute_merkle_root(  # noqa: SLF001
+            merkle_root = self._compute_merkle_root(
                 [L8Attestation.get_attestation_hash(attestation) for attestation in attestations]
             )
             if merkle_root != block.get("merkle_root"):

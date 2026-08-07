@@ -212,6 +212,10 @@ class L8WitnessLedger:
         with self._lock:
             return self._blocks[-1]
 
+    def list_blocks(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._blocks)
+
     def get_block_count(self) -> int:
         with self._lock:
             return len(self._blocks)
