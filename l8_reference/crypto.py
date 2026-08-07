@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import time
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Any
 
 try:
@@ -57,12 +59,35 @@ PHASE_4 = "2045+"
 CURRENT_PHASE = PHASE_1
 
 
+@dataclass(frozen=True)
+class _PhaseOneStubPublicKey:
+    algorithm: str
+    delegate: Any
+
+
+@dataclass(frozen=True)
+class _PhaseOneStubPrivateKey:
+    algorithm: str
+    delegate: Any
+
+    def public_key(self) -> _PhaseOneStubPublicKey:
+        return _PhaseOneStubPublicKey(self.algorithm, self.delegate.public_key())
+
+
 class L8Crypto:
     """Cryptographic engine for the L8 Protocol."""
 
     HASH_ALG = "blake3" if HAS_BLAKE3 else "sha3-256"
     HASH_SIZE = 32
     SIG_ALG = ALG_ED25519
+
+    @staticmethod
+    def _unwrap_private_key(private_key: Any) -> Any:
+        return private_key.delegate if isinstance(private_key, _PhaseOneStubPrivateKey) else private_key
+
+    @staticmethod
+    def _unwrap_public_key(public_key: Any) -> Any:
+        return public_key.delegate if isinstance(public_key, _PhaseOneStubPublicKey) else public_key
 
     @staticmethod
     def hash(data: bytes) -> bytes:
@@ -179,7 +204,10 @@ class L8Crypto:
         if not CRYPTO_AVAILABLE:
             raise RuntimeError("cryptography library required")
         private_key = Ed25519PrivateKey.generate()
-        return private_key, private_key.public_key()
+        if algorithm == ALG_ED25519:
+            return private_key, private_key.public_key()
+        stub_private_key = _PhaseOneStubPrivateKey(algorithm=algorithm, delegate=private_key)
+        return stub_private_key, stub_private_key.public_key()
 
     @staticmethod
     def serialize_private_key(private_key: Any, algorithm: str = ALG_ED25519) -> str:
@@ -188,7 +216,7 @@ class L8Crypto:
             raise ValueError(f"Unsupported algorithm: {algorithm}")
         if not CRYPTO_AVAILABLE:
             raise RuntimeError("cryptography library required")
-        raw = private_key.private_bytes(
+        raw = L8Crypto._unwrap_private_key(private_key).private_bytes(
             encoding=serialization.Encoding.Raw,
             format=serialization.PrivateFormat.Raw,
             encryption_algorithm=serialization.NoEncryption(),
@@ -202,7 +230,10 @@ class L8Crypto:
             raise ValueError(f"Unsupported algorithm: {algorithm}")
         if not CRYPTO_AVAILABLE:
             raise RuntimeError("cryptography library required")
-        return Ed25519PrivateKey.from_private_bytes(L8Crypto.b64url_decode(b64url))
+        private_key = Ed25519PrivateKey.from_private_bytes(L8Crypto.b64url_decode(b64url))
+        if algorithm == ALG_ED25519:
+            return private_key
+        return _PhaseOneStubPrivateKey(algorithm=algorithm, delegate=private_key)
 
     @staticmethod
     def serialize_public_key(public_key: Any, algorithm: str = ALG_ED25519) -> str:
@@ -211,7 +242,7 @@ class L8Crypto:
             raise ValueError(f"Unsupported algorithm: {algorithm}")
         if not CRYPTO_AVAILABLE:
             raise RuntimeError("cryptography library required")
-        raw = public_key.public_bytes(
+        raw = L8Crypto._unwrap_public_key(public_key).public_bytes(
             encoding=serialization.Encoding.Raw,
             format=serialization.PublicFormat.Raw,
         )
@@ -224,7 +255,10 @@ class L8Crypto:
             raise ValueError(f"Unsupported algorithm: {algorithm}")
         if not CRYPTO_AVAILABLE:
             raise RuntimeError("cryptography library required")
-        return Ed25519PublicKey.from_public_bytes(L8Crypto.b64url_decode(b64url))
+        public_key = Ed25519PublicKey.from_public_bytes(L8Crypto.b64url_decode(b64url))
+        if algorithm == ALG_ED25519:
+            return public_key
+        return _PhaseOneStubPublicKey(algorithm=algorithm, delegate=public_key)
 
     @staticmethod
     def sign(private_key: Any, message: bytes, algorithm: str = ALG_ED25519) -> bytes:
@@ -233,7 +267,7 @@ class L8Crypto:
             raise ValueError(f"Unsupported algorithm: {algorithm}")
         if not CRYPTO_AVAILABLE:
             raise RuntimeError("cryptography library required")
-        return private_key.sign(message)
+        return L8Crypto._unwrap_private_key(private_key).sign(message)
 
     @staticmethod
     def verify(public_key: Any, message: bytes, signature: bytes, algorithm: str = ALG_ED25519) -> bool:
@@ -243,7 +277,7 @@ class L8Crypto:
         if not CRYPTO_AVAILABLE:
             raise RuntimeError("cryptography library required")
         try:
-            public_key.verify(signature, message)
+            L8Crypto._unwrap_public_key(public_key).verify(signature, message)
             return True
         except InvalidSignature:
             return False
@@ -306,7 +340,7 @@ class L8Crypto:
     @staticmethod
     def now_unix_ns() -> int:
         """Return the current UTC time in Unix nanoseconds."""
-        return int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+        return time.time_ns()
 
     @staticmethod
     def now_rfc3339() -> str:

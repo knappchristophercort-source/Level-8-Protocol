@@ -69,7 +69,6 @@ class L8WitnessLedger:
                 attestation = self._storage.load_attestation(attestation_id)
                 if attestation:
                     self._attestations[attestation_id] = attestation
-                    self._subject_index.setdefault(attestation["sub"], []).append(attestation_id)
 
     def _persist_state(self) -> None:
         if not self._storage:
@@ -221,6 +220,14 @@ class L8WitnessLedger:
         with self._lock:
             return len(self._attestations)
 
+    def list_attestations(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._attestations.values())
+
+    def list_subject_ids(self) -> list[str]:
+        with self._lock:
+            return list(self._subject_index.keys())
+
     def verify_chain(self) -> bool:
         with self._lock:
             for index, block in enumerate(self._blocks):
@@ -300,7 +307,7 @@ class L8WitnessLedger:
             },
             "ts_unix_ns": L8Crypto.now_unix_ns(),
             "ts_rfc3339": L8Crypto.now_rfc3339(),
-            "prev": None,
+            "prev": self._subject_index.get(self.operator.uuid, [None])[-1],
             "sig": None,
             "pk": self.operator.public_key_b64url,
             "wit": [],

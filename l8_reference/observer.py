@@ -34,7 +34,7 @@ class L8Observer:
     def anomaly_query(self, subject_id: str | None = None) -> list[dict[str, Any]]:
         """Return anomaly attestations, optionally scoped to a subject."""
         if subject_id is None:
-            history = list(self.ledger._attestations.values())
+            history = self.ledger.list_attestations()
         else:
             history = self.ledger.get_subject_history(subject_id)
         return [attestation for attestation in history if attestation.get("claim", {}).get("type") == "anomaly"]
@@ -77,7 +77,7 @@ class L8Observer:
     ) -> list[dict[str, Any]]:
         """Return attestations that reference one or more components."""
         results: list[dict[str, Any]] = []
-        for attestation in self.ledger._attestations.values():
+        for attestation in self.ledger.list_attestations():
             body = attestation.get("claim", {}).get("body", {})
             references: list[str] = []
             for key in ("operator_id", "subject_id", "related_attestations", "components"):
@@ -141,5 +141,5 @@ class L8Observer:
             "attestation_count": self.ledger.get_attestation_count(),
             "chain_valid": self.ledger.verify_chain(),
             "mode": self.ledger.mode,
-            "subjects_observed": len(self.ledger._subject_index),
+            "subjects_observed": len(self.ledger.list_subject_ids()),
         }
