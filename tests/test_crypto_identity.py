@@ -40,7 +40,7 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
     ) -> dict[str, Any]:
         attestation = {
             "ver": "L8/1.0",
-            "id": f"{claim_type}-{uuid.uuid4()}",
+            "id": str(uuid.uuid4()),
             "sub": subject.uuid,
             "claim": {"type": claim_type, "body": claim_body},
             "ts_unix_ns": ts_unix_ns or L8Crypto.now_unix_ns(),
@@ -53,9 +53,10 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
         }
         if extra_fields:
             attestation.update(extra_fields)
-        payload = {key: value for key, value in attestation.items() if key not in {"sig", "wit"}}
         signer = sign_fn or subject.sign
-        attestation["sig"] = L8Crypto.b64url_encode(signer(L8Crypto.canonical_hash(payload)))
+        attestation["sig"] = L8Crypto.b64url_encode(
+            signer(L8Crypto.canonical_hash(L8Attestation.get_signing_payload(attestation)))
+        )
         return attestation
 
     def test_hash_configuration_and_encodings(self) -> None:
@@ -173,6 +174,19 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
         self.assertEqual(attestation["sub"], identity.uuid)
         self.assertEqual(attestation["meta"]["sentinel"], "sentinel-1")
         self.assertTrue(L8Attestation.verify_structure(attestation))
+        self.assertEqual(L8Attestation.from_cbor(L8Attestation.to_cbor(attestation)), attestation)
+
+    def test_attestation_create_rejects_invalid_claim_type(self) -> None:
+        identity = L8Identity()
+
+        with self.assertRaisesRegex(ValueError, "Invalid claim type"):
+            L8Attestation.create(
+                subject_id=identity.uuid,
+                claim_type="invalid-claim",
+                claim_body={},
+                subject_pk_b64url=identity.public_key_b64url,
+                sign_fn=identity.sign,
+            )
 
     def test_witness_ledger_persistence_and_inclusion_proof(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -271,9 +285,11 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
         observer = L8Observer(ledger, verifier=L8Verifier(ledger))
         subject = L8Identity(kind=L8Identity.KIND_AGENT, operator_id=operator.uuid)
         identity_attestation = subject.create_binding_attestation()
+        anomaly_id = str(uuid.uuid4())
+        succession_id = str(uuid.uuid4())
         anomaly_attestation = {
             "ver": "L8/1.0",
-            "id": "anomaly-1",
+            "id": anomaly_id,
             "sub": subject.uuid,
             "claim": {
                 "type": "anomaly",
@@ -288,14 +304,16 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
             "prev": identity_attestation["id"],
             "sig": None,
             "pk": operator.public_key_b64url,
-            "wit": [{"pk": identity_attestation["pk"], "ts_unix_ns": L8Crypto.now_unix_ns()}],
+            "wit": [],
             "meta": {"sentinel": operator.uuid, "scope": "observation", "env": "production"},
         }
-        anomaly_payload = {key: value for key, value in anomaly_attestation.items() if key not in {"sig", "wit"}}
-        anomaly_attestation["sig"] = L8Crypto.b64url_encode(operator.sign(L8Crypto.canonical_hash(anomaly_payload)))
+        anomaly_attestation["sig"] = L8Crypto.b64url_encode(
+            operator.sign(L8Crypto.canonical_hash(L8Attestation.get_signing_payload(anomaly_attestation)))
+        )
+        L8Attestation.add_witness(anomaly_attestation, subject)
         succession_attestation = {
             "ver": "L8/1.0",
-            "id": "succession-1",
+            "id": succession_id,
             "sub": subject.uuid,
             "claim": {"type": "succession", "body": {"related_attestations": [identity_attestation["id"]]}},
             "ts_unix_ns": L8Crypto.now_unix_ns(),
@@ -306,11 +324,8 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
             "wit": [],
             "meta": {"sentinel": operator.uuid, "scope": "observation", "env": "production"},
         }
-        succession_payload = {
-            key: value for key, value in succession_attestation.items() if key not in {"sig", "wit"}
-        }
         succession_attestation["sig"] = L8Crypto.b64url_encode(
-            operator.sign(L8Crypto.canonical_hash(succession_payload))
+            operator.sign(L8Crypto.canonical_hash(L8Attestation.get_signing_payload(succession_attestation)))
         )
 
         ledger.submit_attestations([identity_attestation, anomaly_attestation, succession_attestation])
@@ -329,12 +344,12 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
 
         self.assertEqual(len(temporal), 3)
         self.assertEqual(len(anomalies), 1)
-        self.assertEqual(anomalies[0]["id"], "anomaly-1")
+        self.assertEqual(anomalies[0]["id"], anomaly_id)
         self.assertEqual(diversity["total_witnesses"], 1)
         self.assertEqual(diversity["independent_witnesses"], 0)
         self.assertTrue(diversity["subject_key_overlap"])
-        self.assertEqual([attestation["id"] for attestation in evolution], ["succession-1"])
-        self.assertEqual([attestation["id"] for attestation in cross_component], ["anomaly-1"])
+        self.assertEqual([attestation["id"] for attestation in evolution], [succession_id])
+        self.assertEqual([attestation["id"] for attestation in cross_component], [anomaly_id])
         self.assertEqual(frequency["total_attestations"], 3)
         self.assertEqual(frequency["by_claim_type"]["identity"], 1)
         self.assertEqual(anomaly_rate["anomaly_count"], 1)
@@ -375,7 +390,7 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
         verifier = L8Verifier(ledger)
         subject = L8Identity()
         identity_attestation = subject.create_binding_attestation()
-        identity_attestation["wit"] = [{"pk": operator.public_key_b64url, "ts_unix_ns": L8Crypto.now_unix_ns()}]
+        L8Attestation.add_witness(identity_attestation, operator)
         action_attestation = self._make_attestation(
             subject,
             "action",
@@ -388,45 +403,31 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
             "anomaly",
             {"components": [subject.uuid], "severity": "low"},
             prev=L8Attestation.get_attestation_hash(action_attestation),
-            witnesses=[{"pk": operator.public_key_b64url, "ts_unix_ns": L8Crypto.now_unix_ns()}],
             ts_unix_ns=action_attestation["ts_unix_ns"] + 1,
         )
+        L8Attestation.add_witness(anomaly_attestation, operator)
 
         next_private_key, next_public_key = L8Crypto.generate_keypair()
         next_public_key_b64url = L8Crypto.serialize_public_key(next_public_key)
-        succession_attestation = {
-            "ver": "L8/1.0",
-            "id": f"succession-{uuid.uuid4()}",
-            "sub": subject.uuid,
-            "claim": {
-                "type": "succession",
-                "body": {
-                    "prev_pk": subject.public_key_b64url,
-                    "next_pk": next_public_key_b64url,
-                },
-            },
-            "ts_unix_ns": anomaly_attestation["ts_unix_ns"] + 1,
-            "ts_rfc3339": L8Crypto.now_rfc3339(),
-            "prev": L8Attestation.get_attestation_hash(anomaly_attestation),
-            "sig": None,
-            "pk": next_public_key_b64url,
-            "wit": [],
-            "meta": {"sentinel": operator.uuid, "scope": "succession-test", "env": "production"},
-        }
-        auth_payload = L8Crypto.canonical_hash(
-            {key: value for key, value in succession_attestation.items() if key not in {"sig", "auth_sig", "wit"}}
+        succession_attestation = L8Attestation.create(
+            subject_id=subject.uuid,
+            claim_type="succession",
+            claim_body={"prev_pk": subject.public_key_b64url, "next_pk": next_public_key_b64url},
+            subject_pk_b64url=next_public_key_b64url,
+            sign_fn=lambda payload: L8Crypto.sign(next_private_key, payload),
+            prev_hash=L8Attestation.get_attestation_hash(anomaly_attestation),
+            sentinel_id=operator.uuid,
+            scope="succession-test",
+            auth_sign_fn=subject.sign,
+            auth_pk_b64url=subject.public_key_b64url,
         )
-        succession_attestation["auth_sig"] = {
-            "pk": subject.public_key_b64url,
-            "sig": L8Crypto.b64url_encode(subject.sign(auth_payload)),
-        }
+        succession_attestation["ts_unix_ns"] = anomaly_attestation["ts_unix_ns"] + 1
+        succession_attestation["ts_rfc3339"] = L8Crypto.now_rfc3339()
+        succession_attestation["auth_sig"]["sig"] = L8Crypto.b64url_encode(
+            subject.sign(L8Crypto.canonical_hash(L8Attestation.get_signing_payload(succession_attestation)))
+        )
         succession_attestation["sig"] = L8Crypto.b64url_encode(
-            L8Crypto.sign(
-                next_private_key,
-                L8Crypto.canonical_hash(
-                    {key: value for key, value in succession_attestation.items() if key not in {"sig", "wit"}}
-                ),
-            )
+            L8Crypto.sign(next_private_key, L8Crypto.canonical_hash(L8Attestation.get_signing_payload(succession_attestation)))
         )
 
         null_attestation = self._make_attestation(
