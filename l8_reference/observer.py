@@ -118,11 +118,8 @@ class L8Observer:
 
     def anomaly_rate(self, subject_id: str, window_ns: int = 86_400_000_000_000) -> dict[str, Any]:
         """Return raw anomaly counts and ratio over a time window."""
-        history = self.temporal_query(
-            subject_id,
-            start_ns=L8Crypto.now_unix_ns() - window_ns,
-            end_ns=L8Crypto.now_unix_ns(),
-        )
+        now = L8Crypto.now_unix_ns()
+        history = self.temporal_query(subject_id, start_ns=now - window_ns, end_ns=now)
         anomalies = [attestation for attestation in history if attestation.get("claim", {}).get("type") == "anomaly"]
         total = len(history)
         return {

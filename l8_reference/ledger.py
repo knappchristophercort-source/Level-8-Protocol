@@ -323,6 +323,7 @@ class L8WitnessLedger:
         self.mode_history.append([new_mode, L8Crypto.now_unix_ns()])
 
     def to_summary(self) -> dict[str, Any]:
+        chain_valid = self.verify_chain()
         with self._lock:
             return {
                 "operator_uuid": self.operator.uuid,
@@ -330,7 +331,7 @@ class L8WitnessLedger:
                 "mode_history": self.mode_history,
                 "block_count": len(self._blocks),
                 "attestation_count": len(self._attestations),
-                "chain_valid": self.verify_chain(),
+                "chain_valid": chain_valid,
                 "latest_block_seq": self._blocks[-1]["seq"] if self._blocks else None,
                 "persistent": self._storage is not None,
                 "storage_dir": self._storage.base_dir if self._storage else None,

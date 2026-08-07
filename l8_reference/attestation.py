@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from .crypto import L8Crypto
@@ -45,7 +46,7 @@ class L8Attestation:
         """Create and sign an attestation."""
         attestation = {
             "ver": "L8/1.0",
-            "id": None,
+            "id": str(uuid.uuid4()),
             "sub": subject_id,
             "claim": {"type": claim_type, "body": claim_body},
             "ts_unix_ns": L8Crypto.now_unix_ns(),
@@ -60,10 +61,6 @@ class L8Attestation:
                 "env": env,
             },
         }
-        if attestation["id"] is None:
-            import uuid
-
-            attestation["id"] = str(uuid.uuid4())
         signature = sign_fn(L8Crypto.canonical_hash(L8Attestation.get_signing_payload(attestation)))
         attestation["sig"] = L8Crypto.b64url_encode(signature)
         return attestation

@@ -130,7 +130,7 @@ class L8Sentinel:
     def _flush_queue(self) -> None:
         """Synchronously flush any queued events."""
         batch: list[dict[str, Any]] = []
-        while not self._queue.empty():
+        while True:
             try:
                 event = self._queue.get_nowait()
             except queue.Empty:
