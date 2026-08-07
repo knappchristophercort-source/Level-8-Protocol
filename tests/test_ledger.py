@@ -1,4 +1,5 @@
 """Tests for l8_reference.ledger module."""
+import copy
 import pytest
 from l8_reference.identity import L8Identity
 from l8_reference.ledger import L8WitnessLedger
@@ -96,6 +97,53 @@ class TestMerkleTree:
 
         proof = ledger.generate_inclusion_proof(att["id"])
         assert proof is not None
+
+    def test_verify_inclusion_proof_valid(self):
+        op = L8Identity()
+        ledger = L8WitnessLedger(operator_identity=op)
+
+        subject = L8Identity()
+        att = subject.create_binding_attestation()
+        ledger.submit_attestations([att])
+
+        proof = ledger.generate_inclusion_proof(att["id"])
+        assert ledger.verify_inclusion_proof(proof, att) is True
+
+    def test_verify_inclusion_proof_tampered_att(self):
+        op = L8Identity()
+        ledger = L8WitnessLedger(operator_identity=op)
+
+        subject = L8Identity()
+        att = subject.create_binding_attestation()
+        ledger.submit_attestations([att])
+
+        proof = ledger.generate_inclusion_proof(att["id"])
+
+        # Tamper with the attestation body
+        tampered = copy.deepcopy(att)
+        tampered["claim"]["body"]["declared"] = False
+
+        assert ledger.verify_inclusion_proof(proof, tampered) is False
+
+    def test_verify_inclusion_proof_unknown_att(self):
+        op = L8Identity()
+        ledger = L8WitnessLedger(operator_identity=op)
+
+        proof = ledger.generate_inclusion_proof("does-not-exist")
+        assert proof is None
+
+    def test_verify_inclusion_proof_single_leaf_genesis(self):
+        """Genesis block has a single attestation — a length-zero path."""
+        op = L8Identity()
+        ledger = L8WitnessLedger(operator_identity=op)
+
+        genesis_att_id = ledger.get_latest_block()["attestations"][0]
+        genesis_att = ledger.get_attestation(genesis_att_id)
+        proof = ledger.generate_inclusion_proof(genesis_att_id)
+
+        assert proof is not None
+        assert proof["path"] == []  # single leaf → no siblings needed
+        assert ledger.verify_inclusion_proof(proof, genesis_att) is True
 
 
 class TestModeTransition:

@@ -71,6 +71,21 @@ class L8Verifier:
         chain.reverse()
         return chain
 
+    def verify_inclusion(self, att_id: str) -> bool:
+        """Return True when *att_id* is in the ledger and its inclusion proof is valid.
+
+        Generates an inclusion proof via the ledger and verifies the Merkle
+        audit path, confirming the attestation was genuinely committed to a block.
+        Returns ``False`` if *att_id* is not present or the proof fails.
+        """
+        att = self._ledger.get_attestation(att_id)
+        if att is None:
+            return False
+        proof = self._ledger.generate_inclusion_proof(att_id)
+        if proof is None:
+            return False
+        return self._ledger.verify_inclusion_proof(proof, att)
+
     # ------------------------------------------------------------------
     # Level conditions  (each gate the level below it)
     # ------------------------------------------------------------------

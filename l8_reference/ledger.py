@@ -127,6 +127,35 @@ class L8WitnessLedger:
             }
         return None
 
+    @staticmethod
+    def verify_inclusion_proof(proof: Dict, att: Dict) -> bool:
+        """Verify that *att* is committed to the block described by *proof*.
+
+        Re-derives the Merkle root by walking the audit path in *proof* and
+        compares it against ``proof["merkle_root"]``.  Returns ``True`` only
+        when the roots match.
+
+        Args:
+            proof: A dict as returned by :meth:`generate_inclusion_proof`.
+            att:   The full attestation dict whose membership is being verified.
+        """
+        try:
+            current = L8Attestation.get_attestation_hash(att)
+            for step in proof["path"]:
+                sibling = step["sibling"]
+                # Nodes are hex digest strings; concatenate and re-hash as UTF-8
+                # bytes — matching the convention in _merkle_path.
+                if step["direction"] == "right":
+                    # current is the left node
+                    combined = current + sibling
+                else:
+                    # current is the right node
+                    combined = sibling + current
+                current = L8Crypto.sha256_hex(combined.encode())
+            return current == proof["merkle_root"]
+        except (KeyError, TypeError):
+            return False
+
     # ------------------------------------------------------------------
     # Mode transition
     # ------------------------------------------------------------------
