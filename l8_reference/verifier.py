@@ -101,13 +101,13 @@ class L8Verifier:
         if not block or block.get("ver") != "L8/1.0":
             return False
 
+        unique_public_keys: set[str] = set()
         try:
             witness = block["witness"]
             block_copy = dict(block)
             block_copy["witness"] = None
             block_hash = L8Crypto.hash(L8Crypto.canonical_json(block_copy))
             if isinstance(witness, list):
-                unique_public_keys: set[str] = set()
                 for entry in witness:
                     public_key = L8Crypto.deserialize_public_key(entry["pk"])
                     signature = L8Crypto.b64url_decode(entry["sig"])
@@ -128,7 +128,7 @@ class L8Verifier:
 
         if isinstance(witness, list):
             policy = getattr(getattr(active_ledger, "operator_set", None), "policy", None)
-            if policy and not policy.is_satisfied(len({entry["pk"] for entry in witness})):
+            if policy and not policy.is_satisfied(len(unique_public_keys)):
                 return False
 
         attestations: list[dict[str, Any]] = []
