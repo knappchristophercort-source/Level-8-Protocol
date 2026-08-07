@@ -2,6 +2,7 @@
 import base64
 import json
 import os
+import re
 from pathlib import Path
 from typing import List, Optional
 
@@ -30,6 +31,8 @@ class SoftwareKeyStore:
     Private keys are serialised as PKCS8 PEM and optionally encrypted with
     *passphrase* using the best available symmetric algorithm.
     """
+
+    _KEY_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
 
     def __init__(self, storage_dir: str, passphrase: Optional[str] = None) -> None:
         self._dir = Path(storage_dir)
@@ -103,7 +106,12 @@ class SoftwareKeyStore:
     # ------------------------------------------------------------------
 
     def _key_path(self, key_id: str) -> Path:
-        return self._dir / f"{key_id}.json"
+        if not self._KEY_ID_RE.match(key_id):
+            raise ValueError(f"Invalid key_id '{key_id}': only alphanumerics, hyphens, and underscores are allowed")
+        resolved = (self._dir / f"{key_id}.json").resolve()
+        if not str(resolved).startswith(str(self._dir.resolve())):
+            raise ValueError(f"key_id '{key_id}' resolves outside the storage directory")
+        return resolved
 
     def _read_record(self, key_id: str) -> dict:
         path = self._key_path(key_id)

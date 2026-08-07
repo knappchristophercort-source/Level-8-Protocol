@@ -26,13 +26,17 @@ pip install "l8-protocol[dev]"
 ## Quick Start
 
 ```python
-from l8_reference import Ledger, Attestation
+from l8_reference import L8Identity, L8WitnessLedger, L8Verifier
 
-ledger = Ledger()
-attestation = Attestation.create(payload=b"hello world")
-ledger.append(attestation)
+operator = L8Identity()
+ledger = L8WitnessLedger(operator_identity=operator)
 
-print(ledger.verify())  # True
+subject = L8Identity()
+att = subject.create_binding_attestation()
+ledger.submit_attestations([att])
+
+verifier = L8Verifier(ledger)
+print(verifier.compute_level(subject.uuid))  # L8Level.L1
 ```
 
 Run the bundled demo:

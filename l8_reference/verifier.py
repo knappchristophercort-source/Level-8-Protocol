@@ -132,5 +132,5 @@ class L8Verifier:
         return False
 
     def _condition_l8(self, history: List[Dict]) -> bool:
-        # Reserved — currently mirrors L7 as a future extension point
-        return self._condition_l7(history)
+        # Reserved — returns False until a distinct L8 condition is defined
+        return False

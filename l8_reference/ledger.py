@@ -1,4 +1,5 @@
 """Append-only block-structured witness ledger for L8 Protocol."""
+import base64
 import json
 import uuid as _uuid
 from datetime import datetime, timezone
@@ -206,5 +207,4 @@ class L8WitnessLedger:
 
 
 def _encode_sig(sig: bytes) -> str:
-    import base64
     return base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
