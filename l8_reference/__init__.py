@@ -1,4 +1,4 @@
-"""L8 Protocol reference implementation package scaffold."""
+"""L8 Protocol reference implementation package."""
 
 __all__ = [
     "attestation",

@@ -17,6 +17,7 @@ from l8_reference.identity import L8Identity
 from l8_reference.ledger import L8WitnessLedger
 from l8_reference.observer import L8Observer
 from l8_reference.sentinel import L8Sentinel
+from l8_reference.verifier import L8Verifier
 
 
 class CryptoIdentityLedgerTests(unittest.TestCase):
@@ -177,7 +178,7 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
     def test_observer_structural_queries(self) -> None:
         operator = L8Identity()
         ledger = L8WitnessLedger(operator, mode=L8WitnessLedger.MODE_PUBLIC)
-        observer = L8Observer(ledger, verifier=object())
+        observer = L8Observer(ledger, verifier=L8Verifier(ledger))
         subject = L8Identity(kind=L8Identity.KIND_AGENT, operator_id=operator.uuid)
         identity_attestation = subject.create_binding_attestation()
         anomaly_attestation = {
@@ -250,6 +251,33 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
         self.assertGreater(anomaly_rate["anomaly_ratio"], 0.0)
         self.assertEqual(summary["subjects_observed"], 2)
         self.assertTrue(summary["chain_valid"])
+
+    def test_verifier_reports_valid_and_tampered_records(self) -> None:
+        operator = L8Identity()
+        ledger = L8WitnessLedger(operator, mode=L8WitnessLedger.MODE_PUBLIC)
+        subject = L8Identity()
+        attestation = subject.create_binding_attestation()
+
+        ledger.submit_attestations([attestation])
+        verifier = L8Verifier(ledger)
+
+        self.assertTrue(verifier.verify_attestation_signature(attestation))
+        self.assertTrue(verifier.verify_block_witness(ledger.get_latest_block()))
+        self.assertTrue(verifier.verify_chain_integrity())
+        self.assertEqual(
+            verifier.aggregate_verification_report(),
+            {
+                "chain_valid": True,
+                "invalid_attestations": [],
+                "block_count": 2,
+                "attestation_count": 2,
+                "subject_count": 2,
+            },
+        )
+
+        tampered_attestation = dict(attestation)
+        tampered_attestation["sig"] = L8Crypto.b64url_encode(b"\x00" * 64)
+        self.assertFalse(verifier.verify_attestation_signature(tampered_attestation))
 
     def test_sentinel_observe_format_submit_flow(self) -> None:
         operator = L8Identity()
