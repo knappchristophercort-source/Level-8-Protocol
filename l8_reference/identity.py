@@ -1,6 +1,6 @@
 """Identity primitives for the L8 Protocol."""
 import uuid as _uuid
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -32,6 +32,34 @@ class L8Identity:
             claim_body={"declared": True},
             subject_pk_b64url=self.public_key_b64url,
             sign_fn=self.sign,
+        )
+
+    def create_endorsement_attestation(
+        self,
+        endorser_identity: "L8Identity",
+        prev_hash: Optional[str] = None,
+    ) -> Dict:
+        """Create an endorsement attestation signed by both this identity and *endorser_identity*.
+
+        The resulting attestation has claim type ``"endorsement"`` and is
+        dual-signed: the subject (self) provides the primary signature and the
+        endorser provides the ``auth_signature``.  The endorser's key must be
+        different from the subject's key.
+        """
+        if endorser_identity.uuid == self.uuid or endorser_identity.public_key_b64url == self.public_key_b64url:
+            raise ValueError("Endorser must be a different identity from the subject")
+        return L8Attestation.create(
+            subject_id=self.uuid,
+            claim_type="endorsement",
+            claim_body={
+                "endorser_id": endorser_identity.uuid,
+                "endorser_pk": endorser_identity.public_key_b64url,
+            },
+            subject_pk_b64url=self.public_key_b64url,
+            sign_fn=self.sign,
+            prev_hash=prev_hash,
+            auth_sign_fn=endorser_identity.sign,
+            auth_pk_b64url=endorser_identity.public_key_b64url,
         )
 
     def rotate_keypair(self) -> Tuple[Ed25519PrivateKey, str]:

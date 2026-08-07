@@ -95,6 +95,15 @@ def main() -> None:
     ledger.submit_attestations([succession_att])
     print("Submitted L7 dual-signature succession attestation.\n")
 
+    # --- L8: independent-operator endorsement -----------------------
+    endorser = L8Identity()
+    endorsement_att = subject.create_endorsement_attestation(
+        endorser_identity=endorser,
+        prev_hash=L8Attestation.get_attestation_hash(succession_att),
+    )
+    ledger.submit_attestations([endorsement_att])
+    print("Submitted L8 endorsement attestation (co-signed by independent operator).\n")
+
     # --- Verification -----------------------------------------------
     verifier = L8Verifier(ledger)
     level = verifier.compute_level(subject.uuid)

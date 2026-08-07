@@ -178,3 +178,165 @@ class TestDualSignatureSuccession:
 
         # L7 should now pass
         assert verifier._condition_l7(ledger.get_subject_history(subject.uuid)) is True
+
+
+def _build_l7_subject(ledger):
+    """Helper: create a subject that has satisfied L7 in *ledger* and return (subject, last_att)."""
+    subject = L8Identity()
+
+    id_att = subject.create_binding_attestation()
+    ledger.submit_attestations([id_att])
+
+    binding_att = L8Attestation.create(
+        subject_id=subject.uuid,
+        claim_type="binding",
+        claim_body={"proof_type": "challenge", "challenge": "test"},
+        subject_pk_b64url=subject.public_key_b64url,
+        sign_fn=subject.sign,
+        prev_hash=L8Attestation.get_attestation_hash(id_att),
+    )
+    ledger.submit_attestations([binding_att])
+
+    action1 = L8Attestation.create(
+        subject_id=subject.uuid,
+        claim_type="action",
+        claim_body={"action_type": "a1"},
+        subject_pk_b64url=subject.public_key_b64url,
+        sign_fn=subject.sign,
+        prev_hash=L8Attestation.get_attestation_hash(binding_att),
+    )
+    ledger.submit_attestations([action1])
+
+    action2 = L8Attestation.create(
+        subject_id=subject.uuid,
+        claim_type="action",
+        claim_body={"action_type": "a2"},
+        subject_pk_b64url=subject.public_key_b64url,
+        sign_fn=subject.sign,
+        prev_hash=L8Attestation.get_attestation_hash(action1),
+    )
+    ledger.submit_attestations([action2])
+
+    anomaly = L8Attestation.create(
+        subject_id=subject.uuid,
+        claim_type="anomaly",
+        claim_body={"anomaly_type": "deviation", "expected": "x", "observed": "y", "severity": "low"},
+        subject_pk_b64url=subject.public_key_b64url,
+        sign_fn=subject.sign,
+        prev_hash=L8Attestation.get_attestation_hash(action2),
+    )
+    ledger.submit_attestations([anomaly])
+
+    old_priv, old_pk = subject.rotate_keypair()
+    new_pk = subject.public_key_b64url
+
+    succession = L8Attestation.create(
+        subject_id=subject.uuid,
+        claim_type="succession",
+        claim_body={
+            "prev_pk": old_pk,
+            "next_pk": new_pk,
+            "prev_fp": L8Crypto.identity_fingerprint(subject.uuid, old_pk),
+            "next_fp": L8Crypto.identity_fingerprint(subject.uuid, new_pk),
+            "reason": "test_rotation",
+            "scope_unchanged": True,
+        },
+        subject_pk_b64url=new_pk,
+        sign_fn=subject.sign,
+        prev_hash=L8Attestation.get_attestation_hash(anomaly),
+        auth_sign_fn=lambda msg: L8Crypto.sign(old_priv, msg),
+        auth_pk_b64url=old_pk,
+    )
+    ledger.submit_attestations([succession])
+
+    return subject, succession
+
+
+class TestL8Endorsement:
+    def test_l8_requires_l7_first(self):
+        op = L8Identity()
+        ledger = L8WitnessLedger(operator_identity=op)
+        verifier = L8Verifier(ledger)
+
+        # Subject only reaches L1 — L8 must be False
+        subject = L8Identity()
+        id_att = subject.create_binding_attestation()
+        ledger.submit_attestations([id_att])
+
+        assert verifier.compute_level(subject.uuid) == L8Level.L1
+
+    def test_l8_self_endorsement_rejected(self):
+        op = L8Identity()
+        ledger = L8WitnessLedger(operator_identity=op)
+        verifier = L8Verifier(ledger)
+
+        subject, last_att = _build_l7_subject(ledger)
+
+        # Attempt self-endorsement (same identity as endorser)
+        with pytest.raises(ValueError):
+            subject.create_endorsement_attestation(endorser_identity=subject)
+
+    def test_l8_valid_endorsement(self):
+        op = L8Identity()
+        ledger = L8WitnessLedger(operator_identity=op)
+        verifier = L8Verifier(ledger)
+
+        subject, last_att = _build_l7_subject(ledger)
+        assert verifier.compute_level(subject.uuid) == L8Level.L7
+
+        endorser = L8Identity()
+        endorsement = subject.create_endorsement_attestation(
+            endorser_identity=endorser,
+            prev_hash=L8Attestation.get_attestation_hash(last_att),
+        )
+        ledger.submit_attestations([endorsement])
+
+        assert verifier.compute_level(subject.uuid) == L8Level.L8
+
+    def test_l8_endorsement_without_auth_signature_rejected(self):
+        op = L8Identity()
+        ledger = L8WitnessLedger(operator_identity=op)
+        verifier = L8Verifier(ledger)
+
+        subject, last_att = _build_l7_subject(ledger)
+
+        # Forge an endorsement with no auth signature
+        endorser = L8Identity()
+        bad_endorsement = L8Attestation.create(
+            subject_id=subject.uuid,
+            claim_type="endorsement",
+            claim_body={"endorser_id": endorser.uuid, "endorser_pk": endorser.public_key_b64url},
+            subject_pk_b64url=subject.public_key_b64url,
+            sign_fn=subject.sign,
+            prev_hash=L8Attestation.get_attestation_hash(last_att),
+            # no auth_sign_fn → no auth_signature
+        )
+        ledger.submit_attestations([bad_endorsement])
+
+        # L8 must not be satisfied
+        assert verifier.compute_level(subject.uuid) == L8Level.L7
+
+    def test_l8_rotated_key_self_endorsement_rejected(self):
+        """An endorsement whose auth_pk is a previously-used subject key must be rejected."""
+        op = L8Identity()
+        ledger = L8WitnessLedger(operator_identity=op)
+        verifier = L8Verifier(ledger)
+
+        subject, last_att = _build_l7_subject(ledger)
+        # _build_l7_subject performs a key rotation; capture the new (current) key
+        # and manufacture an endorsement where the auth_pk is that same key.
+        current_pk = subject.public_key_b64url
+        fake_endorsement = L8Attestation.create(
+            subject_id=subject.uuid,
+            claim_type="endorsement",
+            claim_body={"endorser_id": subject.uuid, "endorser_pk": current_pk},
+            subject_pk_b64url=current_pk,
+            sign_fn=subject.sign,
+            prev_hash=L8Attestation.get_attestation_hash(last_att),
+            auth_sign_fn=subject.sign,
+            auth_pk_b64url=current_pk,
+        )
+        ledger.submit_attestations([fake_endorsement])
+
+        assert verifier.compute_level(subject.uuid) == L8Level.L7
+

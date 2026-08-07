@@ -132,5 +132,32 @@ class L8Verifier:
         return False
 
     def _condition_l8(self, history: List[Dict]) -> bool:
-        # Reserved — returns False until a distinct L8 condition is defined
+        """True when at least one valid independent-operator endorsement exists.
+
+        An endorsement attestation must:
+        - have claim type ``"endorsement"``
+        - carry a valid dual signature (``auth_signature`` + ``auth_pk_b64url``)
+        - have been co-signed by a key that is *different* from the subject's
+          own key (preventing self-endorsement)
+        - be gated on L7 having been satisfied first
+        """
+        if not self._condition_l7(history):
+            return False
+        # Collect all subject public keys used across the history so we can
+        # reject self-endorsements regardless of key rotation.
+        subject_keys = {a["subject_pk_b64url"] for a in history}
+        for att in history:
+            if att["claim"]["type"] != "endorsement":
+                continue
+            body = att["claim"]["body"]
+            if "endorser_id" not in body:
+                continue
+            auth_pk = att.get("auth_pk_b64url", "")
+            if not auth_pk or auth_pk in subject_keys:
+                continue
+            if (
+                L8Attestation.verify_signature(att)
+                and L8Attestation.verify_auth_signature(att)
+            ):
+                return True
         return False
