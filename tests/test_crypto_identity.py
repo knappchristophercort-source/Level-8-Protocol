@@ -14,6 +14,7 @@ from l8_reference.crypto import (
 )
 from l8_reference.identity import L8Identity
 from l8_reference.ledger import L8WitnessLedger
+from l8_reference.observer import L8Observer
 
 
 class CryptoIdentityLedgerTests(unittest.TestCase):
@@ -153,6 +154,83 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
         self.assertEqual(summary["mode"], L8WitnessLedger.MODE_HYBRID)
         self.assertEqual(summary["attestation_count"], 2)
         self.assertEqual(summary["block_count"], 2)
+        self.assertTrue(summary["chain_valid"])
+
+    def test_observer_structural_queries(self) -> None:
+        operator = L8Identity()
+        ledger = L8WitnessLedger(operator, mode=L8WitnessLedger.MODE_PUBLIC)
+        observer = L8Observer(ledger, verifier=object())
+        subject = L8Identity(kind=L8Identity.KIND_AGENT, operator_id=operator.uuid)
+        identity_attestation = subject.create_binding_attestation()
+        anomaly_attestation = {
+            "ver": "L8/1.0",
+            "id": "anomaly-1",
+            "sub": subject.uuid,
+            "claim": {
+                "type": "anomaly",
+                "body": {
+                    "operator_id": operator.uuid,
+                    "subject_id": subject.uuid,
+                    "components": [subject.uuid, operator.uuid],
+                },
+            },
+            "ts_unix_ns": L8Crypto.now_unix_ns(),
+            "ts_rfc3339": L8Crypto.now_rfc3339(),
+            "prev": identity_attestation["id"],
+            "sig": None,
+            "pk": operator.public_key_b64url,
+            "wit": [{"pk": identity_attestation["pk"], "ts_unix_ns": L8Crypto.now_unix_ns()}],
+            "meta": {"sentinel": operator.uuid, "scope": "observation", "env": "production"},
+        }
+        anomaly_payload = {key: value for key, value in anomaly_attestation.items() if key not in {"sig", "wit"}}
+        anomaly_attestation["sig"] = L8Crypto.b64url_encode(operator.sign(L8Crypto.canonical_hash(anomaly_payload)))
+        succession_attestation = {
+            "ver": "L8/1.0",
+            "id": "succession-1",
+            "sub": subject.uuid,
+            "claim": {"type": "succession", "body": {"related_attestations": [identity_attestation["id"]]}},
+            "ts_unix_ns": L8Crypto.now_unix_ns(),
+            "ts_rfc3339": L8Crypto.now_rfc3339(),
+            "prev": anomaly_attestation["id"],
+            "sig": None,
+            "pk": operator.public_key_b64url,
+            "wit": [],
+            "meta": {"sentinel": operator.uuid, "scope": "observation", "env": "production"},
+        }
+        succession_payload = {
+            key: value for key, value in succession_attestation.items() if key not in {"sig", "wit"}
+        }
+        succession_attestation["sig"] = L8Crypto.b64url_encode(
+            operator.sign(L8Crypto.canonical_hash(succession_payload))
+        )
+
+        ledger.submit_attestations([identity_attestation, anomaly_attestation, succession_attestation])
+
+        temporal = observer.temporal_query(subject.uuid)
+        anomalies = observer.anomaly_query(subject.uuid)
+        diversity = observer.witness_diversity_query(subject.uuid)
+        evolution = observer.evolution_query(subject.uuid)
+        cross_component = observer.cross_component_query(
+            component_ids=[subject.uuid, operator.uuid],
+            claim_types=["anomaly"],
+        )
+        frequency = observer.attestation_frequency(subject.uuid)
+        anomaly_rate = observer.anomaly_rate(subject.uuid)
+        summary = observer.ledger_summary()
+
+        self.assertEqual(len(temporal), 3)
+        self.assertEqual(len(anomalies), 1)
+        self.assertEqual(anomalies[0]["id"], "anomaly-1")
+        self.assertEqual(diversity["total_witnesses"], 1)
+        self.assertEqual(diversity["independent_witnesses"], 0)
+        self.assertTrue(diversity["subject_key_overlap"])
+        self.assertEqual([attestation["id"] for attestation in evolution], ["succession-1"])
+        self.assertEqual([attestation["id"] for attestation in cross_component], ["anomaly-1"])
+        self.assertEqual(frequency["total_attestations"], 3)
+        self.assertEqual(frequency["by_claim_type"]["identity"], 1)
+        self.assertEqual(anomaly_rate["anomaly_count"], 1)
+        self.assertGreater(anomaly_rate["anomaly_ratio"], 0.0)
+        self.assertEqual(summary["subjects_observed"], 2)
         self.assertTrue(summary["chain_valid"])
 
 
