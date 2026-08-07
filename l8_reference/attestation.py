@@ -30,6 +30,45 @@ class L8Attestation:
         return {key: value for key, value in attestation.items() if key not in {"sig", "wit"}}
 
     @staticmethod
+    def create(
+        subject_id: str,
+        claim_type: str,
+        claim_body: dict[str, Any],
+        subject_pk_b64url: str,
+        sign_fn: Any,
+        prev_hash: str | None = None,
+        sentinel_id: str | None = None,
+        scope: str = "default",
+        env: str = "production",
+        witnesses: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Create and sign an attestation."""
+        attestation = {
+            "ver": "L8/1.0",
+            "id": None,
+            "sub": subject_id,
+            "claim": {"type": claim_type, "body": claim_body},
+            "ts_unix_ns": L8Crypto.now_unix_ns(),
+            "ts_rfc3339": L8Crypto.now_rfc3339(),
+            "prev": prev_hash,
+            "sig": None,
+            "pk": subject_pk_b64url,
+            "wit": witnesses or [],
+            "meta": {
+                "sentinel": sentinel_id or subject_id,
+                "scope": scope,
+                "env": env,
+            },
+        }
+        if attestation["id"] is None:
+            import uuid
+
+            attestation["id"] = str(uuid.uuid4())
+        signature = sign_fn(L8Crypto.canonical_hash(L8Attestation.get_signing_payload(attestation)))
+        attestation["sig"] = L8Crypto.b64url_encode(signature)
+        return attestation
+
+    @staticmethod
     def get_attestation_hash(attestation: dict[str, Any]) -> str:
         """Return the base64url hash of a canonical attestation."""
         return L8Crypto.hash_b64url(L8Crypto.canonical_json(attestation))

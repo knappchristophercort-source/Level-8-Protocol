@@ -1,5 +1,6 @@
 import json
 import re
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -15,6 +16,7 @@ from l8_reference.crypto import (
 from l8_reference.identity import L8Identity
 from l8_reference.ledger import L8WitnessLedger
 from l8_reference.observer import L8Observer
+from l8_reference.sentinel import L8Sentinel
 
 
 class CryptoIdentityLedgerTests(unittest.TestCase):
@@ -117,6 +119,22 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
 
         self.assertTrue(L8Attestation.verify_structure(attestation))
         self.assertTrue(L8Crypto.b64url_decode(L8Attestation.get_attestation_hash(attestation)))
+
+    def test_attestation_create_helper(self) -> None:
+        identity = L8Identity()
+        attestation = L8Attestation.create(
+            subject_id=identity.uuid,
+            claim_type="action",
+            claim_body={"action_type": "demo"},
+            subject_pk_b64url=identity.public_key_b64url,
+            sign_fn=identity.sign,
+            sentinel_id="sentinel-1",
+            scope="unit-test",
+        )
+
+        self.assertEqual(attestation["sub"], identity.uuid)
+        self.assertEqual(attestation["meta"]["sentinel"], "sentinel-1")
+        self.assertTrue(L8Attestation.verify_structure(attestation))
 
     def test_witness_ledger_persistence_and_inclusion_proof(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -232,6 +250,42 @@ class CryptoIdentityLedgerTests(unittest.TestCase):
         self.assertGreater(anomaly_rate["anomaly_ratio"], 0.0)
         self.assertEqual(summary["subjects_observed"], 2)
         self.assertTrue(summary["chain_valid"])
+
+    def test_sentinel_observe_format_submit_flow(self) -> None:
+        operator = L8Identity()
+        ledger = L8WitnessLedger(operator, mode=L8WitnessLedger.MODE_PUBLIC)
+        sentinel_identity = L8Identity()
+        sentinel = L8Sentinel(
+            sentinel_identity=sentinel_identity,
+            scope={"components": [operator.uuid], "actions": ["deploy"], "state_spaces": [], "exclusions": []},
+            ledger_submit_fn=ledger.submit_attestations,
+        )
+        subject = L8Identity()
+        subject_binding = subject.create_binding_attestation()
+        ledger.submit_attestations([subject_binding])
+
+        sentinel.start(batch_size=1, batch_timeout_ms=10)
+        sentinel.observe(
+            {
+                "subject_id": subject.uuid,
+                "subject_pk": subject.public_key_b64url,
+                "subject_sign_fn": subject.sign,
+                "claim_type": "action",
+                "claim_body": {"action_type": "deploy"},
+                "prev_hash": subject_binding["id"],
+                "scope": "deployments",
+            }
+        )
+        time.sleep(0.2)
+        sentinel.stop()
+
+        self.assertEqual(sentinel.get_scope_attestation()["meta"]["scope"], "sentinel_self_scope")
+        self.assertEqual(sentinel.submitted_count, 1)
+        self.assertEqual(len(sentinel.submitted_ids), 1)
+        submitted = ledger.get_attestation(sentinel.submitted_ids[0])
+        self.assertIsNotNone(submitted)
+        self.assertEqual(submitted["meta"]["sentinel"], sentinel_identity.uuid)
+        self.assertEqual(submitted["prev"], subject_binding["id"])
 
 
 if __name__ == "__main__":
