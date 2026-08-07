@@ -12,7 +12,11 @@ license = { file = "LICENSE" }
 authors = [
   { name = "Level-8-Protocol contributors" }
 ]
-dependencies = []
+dependencies = [
+  "blake3==1.0.9",
+  "cbor2==6.1.4",
+  "cryptography==50.0.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["l8_reference*"]
